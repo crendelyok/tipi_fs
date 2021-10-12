@@ -2,18 +2,28 @@
 #include <stdlib.h>
 #include <dirent.h>
 #include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <string.h>
+#include <unistd.h>
 
 #define SUCCESS       0
 #define ERR_OPENDIR  -1
 #define ERR_DIRFD    -2
 #define ERR_CLOSEDIR -3
 #define ERR_NULL_POINTER -4
-
-
+#define ERR_READ         -5
+#define ERR_OPEN         -6
+#define ERR_CALLOC       -7
+#define ERR_STRCAT       -8
 
 #define TRUE  1
 #define FALSE 0
+
+#define DEFAULT_SIZE 1024
+#define STAT_SIZE    16384    
+
+const char stat_format_string[DEFAULT_SIZE] = "%*d %*s %*c %*d %*d %*d %*d %*d %*u %*u %*u %*u %*u %*u %*u %*d %*d %*d %*d %*d %*d %*u %lu %ld"; 
 
 int isnumber(char* str)
 {
@@ -34,13 +44,59 @@ int show_ps(DIR* dirp)
 	if (dirsp == NULL)
 		return FALSE;
 
-	// printf("%d  ", isnumber(dirsp->d_name));
-	// printf("%s\n", dirsp->d_name); 
+	//get pid
 	if (isnumber(dirsp->d_name) == FALSE)
 		return TRUE;
 	
-			
-	printf("%s %s %s %s", dirsp->name, rss, vsize, cmd);
+	//get cmd
+	char* cmd_pathname = calloc(DEFAULT_SIZE, sizeof(char));
+	if (cmd_pathname == NULL)
+		exit(ERR_CALLOC);
+	if ((cmd_pathname = strcat(cmd_pathname, "/proc/")) == NULL)
+		exit(ERR_STRCAT);
+	if ((cmd_pathname = strcat(cmd_pathname, dirsp->d_name)) == NULL)
+		exit(ERR_STRCAT);
+	if ((cmd_pathname = strcat(cmd_pathname, "/comm")) == NULL)
+		exit(ERR_STRCAT);
+
+	int cmd_fd = -1;
+	if ((cmd_fd = open(cmd_pathname, O_RDONLY)) == -1)
+		exit(ERR_OPEN);
+	
+	char cmd[DEFAULT_SIZE] = "";
+	if (read(cmd_fd, cmd, DEFAULT_SIZE-1) == -1)
+		exit(ERR_READ);
+	close(cmd_fd);
+	
+	//get vsize
+	unsigned long vsize = 0;
+	long rss = 0;
+	char* vsize_pathname = calloc(DEFAULT_SIZE, sizeof(char));
+	if (vsize_pathname == NULL)
+		exit(ERR_CALLOC);
+	if ((vsize_pathname = strcat(vsize_pathname, "/proc/")) == NULL)
+		exit(ERR_STRCAT);
+	if ((vsize_pathname = strcat(vsize_pathname, dirsp->d_name)) == NULL)
+		exit(ERR_STRCAT);
+	if ((vsize_pathname = strcat(vsize_pathname, "/stat")) == NULL)
+		exit(ERR_STRCAT);
+
+	int stat_fd = -1;
+	if ((stat_fd = open(vsize_pathname, O_RDONLY)) == -1)
+		exit(ERR_OPEN);
+
+	char stat[STAT_SIZE] = "";
+	if (read(stat_fd, stat, STAT_SIZE-1) == -1)
+		exit(ERR_READ);
+	close(stat_fd);
+
+	sscanf(stat, stat_format_string, &vsize, &rss);
+	
+	
+	printf("%s %lu %ld %s", dirsp->d_name, rss, vsize, cmd);
+
+	free(cmd_pathname);
+	free(vsize_pathname);
 	return TRUE;
 }
 
@@ -58,7 +114,7 @@ int main()
 		return ERR_DIRFD;
 	
 
-	printf(" PID RSS  VSIZE    CMD\n");
+	printf("PID RSS  VSIZE(bytes)    CMD\n");
 	while(show_ps(dirp)) {}
 
 	/* close directory stream of /proc */
