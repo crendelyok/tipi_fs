@@ -7,15 +7,17 @@
 #include <string.h>
 #include <unistd.h>
 
-#define SUCCESS       0
-#define ERR_OPENDIR  -1
-#define ERR_DIRFD    -2
-#define ERR_CLOSEDIR -3
+#define SUCCESS           0
+#define ERR_OPENDIR      -1
+#define ERR_DIRFD        -2
+#define ERR_CLOSEDIR     -3
 #define ERR_NULL_POINTER -4
 #define ERR_READ         -5
 #define ERR_OPEN         -6
 #define ERR_CALLOC       -7
 #define ERR_STRCAT       -8
+#define ERR_PRINTF       -9
+#define ERR_SSCANF       -10
 
 #define TRUE  1
 #define FALSE 0
@@ -68,7 +70,7 @@ int show_ps(DIR* dirp)
 		exit(ERR_READ);
 	close(cmd_fd);
 	
-	//get vsize
+	//get vsize and rss
 	unsigned long vsize = 0;
 	long rss = 0;
 	char* vsize_pathname = calloc(DEFAULT_SIZE, sizeof(char));
@@ -90,10 +92,12 @@ int show_ps(DIR* dirp)
 		exit(ERR_READ);
 	close(stat_fd);
 
-	sscanf(stat, stat_format_string, &vsize, &rss);
+	if (sscanf(stat, stat_format_string, &vsize, &rss) == EOF)
+		exit(ERR_SSCANF);
 	
 	
-	printf("%s %lu %ld %s", dirsp->d_name, rss, vsize, cmd);
+	if (printf("%s %lu %ld %s", dirsp->d_name, rss, vsize, cmd) < 0)
+		exit(ERR_PRINTF);
 
 	free(cmd_pathname);
 	free(vsize_pathname);
@@ -114,7 +118,8 @@ int main()
 		return ERR_DIRFD;
 	
 
-	printf("PID RSS  VSIZE(bytes)    CMD\n");
+	if (printf("PID RSS  VSIZE(bytes)    CMD\n") < 0)
+		return ERR_PRINTF;
 	while(show_ps(dirp)) {}
 
 	/* close directory stream of /proc */
