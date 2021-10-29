@@ -8,12 +8,7 @@
 #include <sys/types.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
-
-#define ERR 1
-#define ERR_SUBMIT -2
-#define ERR_WAIT -3
-
-
+#include <stdlib.h>
 
 static int src_fd, dst_fd;
 
@@ -24,12 +19,11 @@ static int src_fd, dst_fd;
 typedef enum {
 	STATUS_READ = 0,
 	STATUS_WRITE = 1,
-	STATUS_UNDEFINED = 2
 } rw_status;
 
 struct io_data {
 	rw_status status;
-	off_t start_offset, offset;
+	off_t offset;
 	size_t len;
 	struct iovec iov;
 };
@@ -48,10 +42,9 @@ static int queue_read(struct io_uring* ring, off_t size, off_t offset)
 	if (sqe == NULL) 
 		return -1;
 
-	struct io_data* data = xmalloc(size * sizeof(*data));
+	struct io_data* data = xmalloc(size + sizeof(*data));
 
 	data->status = STATUS_READ;
-	data->start_offset = offset;
         data->offset = offset;
 	data->len = size;
 	
@@ -66,12 +59,18 @@ static int queue_read(struct io_uring* ring, off_t size, off_t offset)
 
 static int queue_write(struct io_uring* ring, struct io_data* data)
 {
+	data->status = STATUS_WRITE;
+	//data->iov.iov_base = data + 1;
+	//data->iov.iov_len = data->len;
+
 	struct io_uring_sqe* sqe;
 	sqe = io_uring_get_sqe(ring);
-
+	if (sqe == NULL) {
+		return -1;
+	}
 	io_uring_prep_writev(sqe, dst_fd, &data->iov, 1, data->offset);
 	io_uring_sqe_set_data(sqe, data);
-	io_uring_submit(ring);
+
 	return 0;
 }
 
@@ -79,67 +78,66 @@ static int cp(struct io_uring* ring, off_t src_size)
 {
 	struct io_uring_cqe* cqe;
 
-	off_t can_read, can_write, offset;
-	can_write = src_size;
-	can_read = src_size; 
+	off_t offset;
 
-	unsigned long readn, writen;
-	readn = 0;
-	writen = 0;
-
-	// First 4 submits
 	offset = 0;
-	for (int i = 0; i < ENTRIES && can_read; i++) {
-		off_t current_size = can_read;
-		if (current_size > _BLOCK_SIZE)
-			current_size = _BLOCK_SIZE;
-		if (!current_size)
-			break;
+	int writes_remain = 0;
+	int entries_left = ENTRIES;
+	int readn = 0;
+	while(offset < src_size) {
+		while(entries_left > 0) {
+			off_t current_size = src_size - offset;
+			if (current_size > _BLOCK_SIZE)
+				current_size = _BLOCK_SIZE;
+			if (!current_size)
+				break;
+			if (queue_read(ring, current_size, offset) < 0)
+				break;
+			offset += current_size;
+			entries_left--;
+			readn++;
+		}
 
-		if (queue_read(ring, current_size, offset) < 0)
-			break;
-		readn += 1;
-		offset += current_size;
-		can_read -= current_size;	
-	}
-	if (io_uring_submit(ring) < 0)
-		return ERR_SUBMIT;	
-
-	while (can_read || can_write) {
-		// first we wait for at least 1 read
-		// then we submit 1 write	
-		if (can_write) {
+		io_uring_submit_and_wait(ring, 1);
+		entries_left++;
+		
+		while(io_uring_peek_cqe(ring, &cqe) == 0) {
 			struct io_data* data;
-			if (io_uring_wait_cqe(ring, &cqe) < 0)
-				return ERR_WAIT;
-			
 			data = io_uring_cqe_get_data(cqe);
-			queue_write(ring, data);
-			can_write -= data->len;
-			writen += 1;
-		}
-
-		if (can_read) {
-			off_t active_size = can_read;
-			// ring if full
-			// choose active block size
-			if (can_read > BLOCK_SIZE)
-				active_size = BLOCK_SIZE;
-			// no read left
-			if (can_read == 0)
+			if (data == NULL)
 				break;
-
-			if (queue_read(ring, active_size, offset) < 0)
-				break;
-
-			can_read -= active_size;
-			offset += active_size;
-			readn += 1;
-
+			if (data->status == STATUS_READ) {
+				if (queue_write(ring, data) < 0)
+					break;
+				readn--;
+				entries_left--;
+				writes_remain++;
+			}
+			else if (data->status == STATUS_WRITE) {		
+				entries_left++;
+				writes_remain--;
+				free(data);
+			}
+			io_uring_cqe_seen(ring, cqe);
 		}
 	}
+	
+	// catch remaining writes
+	while(writes_remain > 0) {
+		struct io_data* data;
+		io_uring_submit_and_wait(ring, 1);
+		if (io_uring_peek_cqe(ring, &cqe) != 0)
+			break;
+		data = io_uring_cqe_get_data(cqe);
+		if (data != NULL)
+			free(data);
+		writes_remain--;
+	}
+
 	return 0;
 }
+
+#define ERR -1
 int main(int argc, char* argv[])
 {
 	if (argc != 3) {
@@ -170,12 +168,13 @@ int main(int argc, char* argv[])
 		return ERR;
 	}
 
-	int ret = cp(&ring, src_size);
-	printf("ret cp: %d\n", ret);
+	cp(&ring, src_size);
 
 	// free 
 	close(src_fd);
 	close(dst_fd);
 	io_uring_queue_exit(&ring);
-	return ret;
+
+	return 0;
 }
+//
