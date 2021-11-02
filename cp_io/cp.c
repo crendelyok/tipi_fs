@@ -9,6 +9,7 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <string.h>
 
 static int src_fd, dst_fd;
 
@@ -32,7 +33,7 @@ static off_t get_f_size(int fd)
 {
 	struct stat st;
 	if (fstat(fd, &st) < 0)
-		return -1;
+		return -errno;
 	return st.st_size;
 }
 
@@ -141,30 +142,31 @@ static int cp(struct io_uring* ring, off_t src_size)
 int main(int argc, char* argv[])
 {
 	if (argc != 3) {
-		printf("cp: missing file opeand\nexample: ./cp <src> <dest>\n");
+		printf("cp: missing file operand\nexample: './cp <src> <dest>'\n");
 		return ERR;
 	}
 	
 	// Open <src> and <dst>
 	if ((src_fd = open(argv[1], O_RDONLY)) < 0) {	
-		LOG("err: open <src>");
+		printf("err: can`t open '%s' as <src>: %i (%s)", argv[1], errno, strerror(errno));
 		return ERR;
 	}
 	if ((dst_fd = open(argv[2], O_WRONLY | O_CREAT | O_TRUNC, 0644)) < 0) {
-		LOG("err: open <dst>");
+		printf("err: can`t open '%s' as <dst>: %i (%s)", argv[2], errno, strerror(errno));
 		return ERR;
 	}
 
 	// Get <src> size
 	off_t src_size = get_f_size(src_fd);
 	if (src_size < 0) {
-		LOG("err: can`t get <src> file size");
+		printf("err: can`t get the size of '%s': %i (%s)", argv[1], errno, strerror(errno));
 		return ERR;
 	}
+	
 	// io_uring_queue init
 	struct io_uring ring;
 	if (io_uring_queue_init(ENTRIES, &ring, 0) < 0) {
-		LOG("err: io_uring_queue_init");
+		printf("err: io_uring_queue_init: %i (%s)", errno, strerror(errno));
 		return ERR;
 	}
 

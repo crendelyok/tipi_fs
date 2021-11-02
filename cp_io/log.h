@@ -3,10 +3,11 @@
 
 #include <stdio.h>
 #include <errno.h>
+#include <stdarg.h>
 
 #define LOG(format, ...)                  \
 do {                                      \
-	perror(format, ##__VA_ARGS__);    \
+	printf(format, ##__VA_ARGS__);    \
 } while(0)                                
 
 #endif
