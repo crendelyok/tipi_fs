@@ -29,6 +29,10 @@ struct io_data {
 	struct iovec iov;
 };
 
+struct buffers {
+	void* buffer[ENTRIES];
+}buf_t;
+
 static off_t get_f_size(int fd)
 {
 	struct stat st;
